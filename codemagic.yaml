@@ -9,20 +9,34 @@ workflows:
       xcode: latest
 
     scripts:
-      - name: Extract project
+      - name: Extract source
         script: |
-          mkdir -p "$CM_BUILD_DIR/project"
-          unzip -q "$CM_BUILD_DIR/CielMusic_Project.zip" -d "$CM_BUILD_DIR/project"
+          ZIP=$(find "$CM_BUILD_DIR" -maxdepth 3 -name "CielMusic_Project.zip" -print -quit)
 
-      - name: Build iOS app
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: Source ZIP not found"
+            exit 1
+          fi
+
+          mkdir -p "$CM_BUILD_DIR/project"
+          unzip -q "$ZIP" -d "$CM_BUILD_DIR/project"
+
+      - name: Locate Xcode project
         script: |
           PROJECT=$(find "$CM_BUILD_DIR/project" -name "CielMusic.xcodeproj" -print -quit)
 
           if [ -z "$PROJECT" ]; then
-            echo "ERROR: CielMusic.xcodeproj not found"
-            find "$CM_BUILD_DIR/project" -maxdepth 4 -type f
+            echo "ERROR: Xcode project not found"
+            find "$CM_BUILD_DIR/project" -maxdepth 5 -type f
             exit 1
           fi
+
+          echo "Found project: $PROJECT"
+          xcodebuild -list -project "$PROJECT"
+
+      - name: Build iOS app
+        script: |
+          PROJECT=$(find "$CM_BUILD_DIR/project" -name "CielMusic.xcodeproj" -print -quit)
 
           xcodebuild \
             -project "$PROJECT" \
@@ -32,22 +46,50 @@ workflows:
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$CM_BUILD_DIR/build" \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Package IPA
+      - name: Package and verify IPA
         script: |
-          APP=$(find "$CM_BUILD_DIR/build/Build/Products/Release-iphoneos" -maxdepth 1 -name "*.app" -print -quit)
+          APP=$(find "$CM_BUILD_DIR/build/Build/Products/Release-iphoneos" \
+            -type d -name "*.app" -print -quit)
 
           if [ -z "$APP" ]; then
-            echo "ERROR: App not found"
+            echo "ERROR: App bundle not found"
+            exit 1
+          fi
+
+          echo "App found: $APP"
+          du -sh "$APP"
+          ls -lah "$APP"
+
+          if [ ! -s "$APP/Info.plist" ]; then
+            echo "ERROR: Info.plist missing"
+            exit 1
+          fi
+
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Info.plist")
+
+          if [ ! -s "$APP/$EXECUTABLE" ]; then
+            echo "ERROR: App executable missing"
             exit 1
           fi
 
           mkdir -p "$CM_BUILD_DIR/Payload"
           cp -R "$APP" "$CM_BUILD_DIR/Payload/"
+
           cd "$CM_BUILD_DIR"
-          zip -qr Ciel-Music-unsigned.ipa Payload
+          rm -f Ciel-Music-unsigned.ipa
+          zip -qry Ciel-Music-unsigned.ipa Payload
+
+          echo "IPA created:"
+          ls -lh Ciel-Music-unsigned.ipa
+          unzip -l Ciel-Music-unsigned.ipa
+
+          if [ ! -s Ciel-Music-unsigned.ipa ]; then
+            echo "ERROR: IPA is empty"
+            exit 1
+          fi
 
     artifacts:
       - Ciel-Music-unsigned.ipa
-      - /tmp/xcodebuild_logs/*.log
