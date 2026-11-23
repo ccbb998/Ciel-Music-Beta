@@ -1,0 +1,53 @@
+
+workflows:
+  ciel-music-ios:
+    name: Ciel Music iOS IPA
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+
+    environment:
+      xcode: latest
+
+    scripts:
+      - name: Extract project
+        script: |
+          mkdir -p "$CM_BUILD_DIR/project"
+          unzip -q "$CM_BUILD_DIR/CielMusic_Project.zip" -d "$CM_BUILD_DIR/project"
+
+      - name: Build iOS app
+        script: |
+          PROJECT=$(find "$CM_BUILD_DIR/project" -name "CielMusic.xcodeproj" -print -quit)
+
+          if [ -z "$PROJECT" ]; then
+            echo "ERROR: CielMusic.xcodeproj not found"
+            find "$CM_BUILD_DIR/project" -maxdepth 4 -type f
+            exit 1
+          fi
+
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme CielMusic \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$CM_BUILD_DIR/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package IPA
+        script: |
+          APP=$(find "$CM_BUILD_DIR/build/Build/Products/Release-iphoneos" -maxdepth 1 -name "*.app" -print -quit)
+
+          if [ -z "$APP" ]; then
+            echo "ERROR: App not found"
+            exit 1
+          fi
+
+          mkdir -p "$CM_BUILD_DIR/Payload"
+          cp -R "$APP" "$CM_BUILD_DIR/Payload/"
+          cd "$CM_BUILD_DIR"
+          zip -qr Ciel-Music-unsigned.ipa Payload
+
+    artifacts:
+      - Ciel-Music-unsigned.ipa
+      - /tmp/xcodebuild_logs/*.log
